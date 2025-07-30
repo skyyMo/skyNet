@@ -7,7 +7,8 @@ app = Flask(__name__)
 
 # Load environment variables
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-slack_webhook = os.getenv("SLACK_WEBHOOK_URL")
+slack_token = os.getenv("SLACK_BOT_TOKEN")
+channel_id = "C098402A8KF"  # Your target Slack channel ID
 
 @app.route("/", methods=["GET"])
 def health_check():
@@ -40,6 +41,7 @@ def handle_fathom():
 
         print("✅ Transcript check passed. Calling GPT...")
 
+        # GPT call
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
@@ -60,27 +62,3 @@ Be concise, structured, and assume an audience of designers and developers."""
                     "role": "user",
                     "content": transcript
                 }
-            ],
-            temperature=0.3
-        )
-
-        summary = response.choices[0].message.content
-        print("✅ GPT summary generated.")
-
-        slack_payload = {
-            "text": f"*📋 {meeting_title}*\n\n```{summary}```"
-        }
-
-        slack_response = requests.post(slack_webhook, json=slack_payload)
-
-        if slack_response.status_code != 200:
-            print("⚠️ Slack post failed:", slack_response.text)
-
-        return jsonify({"status": "success"}), 200
-
-    except Exception as e:
-        print("❌ Exception occurred:", str(e))
-        return jsonify({"error": "Internal server error"}), 400
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
