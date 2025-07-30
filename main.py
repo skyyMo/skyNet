@@ -52,7 +52,7 @@ def handle_fathom():
 Summarize the key themes of the meeting, then extract:
 1. High-level epics
 2. Detailed user stories using the format: “As a [user], I want [feature] so that [benefit]”
-3. Acceptance criteria for each story using Gherkin-style bullets (Given / When / Then)
+3. Acceptance criteria for each story with numbder bullets for important scope
 
 Use clean formatting, group related stories together, and ensure everything is clear enough for an engineer to begin implementation with minimal follow-up.
 
