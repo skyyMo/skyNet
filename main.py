@@ -9,7 +9,31 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 slack_webhook = os.getenv("SLACK_WEBHOOK_URL")
 
 @app.route("/fathom-webhook", methods=["POST"])
-def fathom_webhook():
+def handle_fathom():
+    try:
+        # Log what's actually coming into the server
+        print("🚨 Headers:", dict(request.headers))
+        print("🚨 Raw data:", request.data)
+
+        # Try to parse the JSON body
+        data = request.get_json(force=True)
+        print("✅ Parsed JSON:", data)
+
+        transcript = data.get("transcript")
+        meeting_title = data.get("meeting_title", "Untitled Meeting")
+
+        if not transcript:
+            print("❌ Error: Transcript missing!")
+            return jsonify({"error": "Transcript required"}), 400
+
+        # (Your GPT + Slack logic goes here...)
+
+        return jsonify({"status": "success"}), 200
+
+    except Exception as e:
+        print("❌ Exception occurred:", str(e))
+        return jsonify({"error": "Invalid request"}), 400
+
     data = request.get_json()
     transcript = data.get("transcript", "")
 
