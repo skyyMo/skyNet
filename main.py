@@ -8,7 +8,7 @@ app = Flask(__name__)
 # Load environment variables
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 slack_token = os.getenv("SLACK_BOT_TOKEN")
-channel_id = "C098402A8KF"  # Your target Slack channel ID
+channel_id = "C098402A8KF"  # Replace with your actual Slack channel ID
 
 @app.route("/", methods=["GET"])
 def health_check():
@@ -17,6 +17,7 @@ def health_check():
 @app.route("/fathom-webhook", methods=["POST"])
 def handle_fathom():
     try:
+        # Log headers and raw request
         print("🚨 Headers:", dict(request.headers))
         print("🚨 Raw data (bytes):", request.data)
 
@@ -29,6 +30,7 @@ def handle_fathom():
         data = request.get_json(force=True)
         print("✅ Parsed JSON:", data)
 
+        # Extract fields
         transcript = data.get("transcript", "").strip()
         meeting_title = data.get("meeting_title", "Untitled Meeting").strip()
 
@@ -41,7 +43,7 @@ def handle_fathom():
 
         print("✅ Transcript check passed. Calling GPT...")
 
-        # GPT call
+        # Send to OpenAI GPT-4o
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
@@ -52,7 +54,7 @@ def handle_fathom():
 Summarize the key themes of the meeting, then extract:
 1. High-level epics
 2. Detailed user stories using the format: “As a [user], I want [feature] so that [benefit]”
-3. Acceptance criteria for each story using numbered bullets for important scope we want to be true
+3. Acceptance criteria for each story using numbered scope that's important to complete and easy to understand.
 
 Use clean formatting, group related stories together, and ensure everything is clear enough for an engineer to begin implementation with minimal follow-up.
 
@@ -69,7 +71,7 @@ Be concise, structured, and assume an audience of designers and developers."""
         summary = response.choices[0].message.content
         print("✅ GPT summary generated.")
 
-        # Slack bot message
+        # Post to Slack via Bot
         slack_payload = {
             "channel": channel_id,
             "text": f"*📋 {meeting_title}*\n\n```{summary}```"
