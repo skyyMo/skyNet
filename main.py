@@ -1,12 +1,12 @@
 from flask import Flask, request, jsonify
-import openai
+from openai import OpenAI
 import requests
 import os
 
 app = Flask(__name__)
 
 # Load environment variables
-openai.api_key = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 slack_webhook = os.getenv("SLACK_WEBHOOK_URL")
 
 @app.route("/", methods=["GET"])
@@ -16,7 +16,6 @@ def health_check():
 @app.route("/fathom-webhook", methods=["POST"])
 def handle_fathom():
     try:
-        # Log headers and raw request
         print("🚨 Headers:", dict(request.headers))
         print("🚨 Raw data (bytes):", request.data)
 
@@ -29,7 +28,6 @@ def handle_fathom():
         data = request.get_json(force=True)
         print("✅ Parsed JSON:", data)
 
-        # Extract values
         transcript = data.get("transcript", "").strip()
         meeting_title = data.get("meeting_title", "Untitled Meeting").strip()
 
@@ -42,13 +40,21 @@ def handle_fathom():
 
         print("✅ Transcript check passed. Calling GPT...")
 
-        # Call GPT
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {
                     "role": "system",
-                    "content": "Summarize this meeting and extract clear dev epics and user stories. Format output in Slack Markdown."
+                    "content": """You are a senior product manager and agile coach helping to convert meeting transcripts into clear, actionable development specs.
+
+Summarize the key themes of the meeting, then extract:
+1. High-level epics
+2. Detailed user stories using the format: “As a [user], I want [feature] so that [benefit]”
+3. Acceptance criteria for each story using Gherkin-style bullets (Given / When / Then)
+
+Use clean formatting, group related stories together, and ensure everything is clear enough for an engineer to begin implementation with minimal follow-up.
+
+Be concise, structured, and assume an audience of designers and developers."""
                 },
                 {
                     "role": "user",
@@ -58,10 +64,9 @@ def handle_fathom():
             temperature=0.3
         )
 
-        summary = response['choices'][0]['message']['content']
+        summary = response.choices[0].message.content
         print("✅ GPT summary generated.")
 
-        # Send to Slack
         slack_payload = {
             "text": f"*📋 {meeting_title}*\n\n```{summary}```"
         }
