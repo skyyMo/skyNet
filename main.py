@@ -16,22 +16,11 @@ webhook_url = os.getenv("WEBHOOK_URL") or "https://skynet-72b6.onrender.com/fath
 # Initialize Notion client
 notion = NotionClient(auth=notion_token)
 
-@app.route("/fathom-webhook", methods=["POST"])
-def handle_fathom():
-    # 🐛 Debug logs
-    print("🚨 HEADERS:", dict(request.headers))
-    try:
-        print("🚨 RAW BODY:", request.data.decode('utf-8'))
-    except Exception as decode_err:
-        print("❌ Decode error:", decode_err)
-
-    try:
-        data = request.get_json(force=True)
-        print("✅ Parsed JSON:", data)
 
 @app.route("/", methods=["GET"])
 def health_check():
     return "Fathom-GPT-Slack webhook is live!"
+
 
 @app.route("/fathom-webhook", methods=["POST"])
 def handle_fathom():
@@ -51,7 +40,7 @@ def handle_fathom():
         transcript = data.get("transcript", "").strip()
         meeting_title = data.get("meeting_title", "Untitled Meeting").strip()
 
-        print(f"📝 Transcript: {transcript}")
+        print(f"📝 Transcript: {transcript[:300]}...")  # Preview
         print(f"📝 Meeting Title: {meeting_title}")
 
         if not transcript:
