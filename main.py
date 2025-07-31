@@ -45,6 +45,7 @@ def handle_fathom():
         )
 
         summary = response.choices[0].message.content
+        print("✅ GPT Summary Output:\n", summary)
 
         # Post to Slack
         slack_payload = {
