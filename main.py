@@ -16,23 +16,16 @@ webhook_url = os.getenv("WEBHOOK_URL") or "https://skynet-72b6.onrender.com/fath
 # Initialize Notion client
 notion = NotionClient(auth=notion_token)
 
-
 @app.route("/", methods=["GET"])
 def health_check():
     return "Fathom-GPT-Slack webhook is live!"
 
-
 @app.route("/fathom-webhook", methods=["POST"])
 def handle_fathom():
     try:
+        # Debug logs
         print("🚨 Headers:", dict(request.headers))
-        print("🚨 Raw data (bytes):", request.data)
-
-        try:
-            body_str = request.data.decode('utf-8')
-            print("🚨 Raw data (decoded):", body_str)
-        except Exception as decode_err:
-            print("❌ Decode error:", decode_err)
+        print("🚨 Raw data:", request.data.decode('utf-8'))
 
         data = request.get_json(force=True)
         print("✅ Parsed JSON:", data)
@@ -40,14 +33,14 @@ def handle_fathom():
         transcript = data.get("transcript", "").strip()
         meeting_title = data.get("meeting_title", "Untitled Meeting").strip()
 
-        print(f"📝 Transcript: {transcript[:300]}...")  # Preview
+        print(f"📝 Transcript: {transcript[:200]}...")  # Truncated for logging
         print(f"📝 Meeting Title: {meeting_title}")
 
         if not transcript:
             print("❌ Error: Transcript is missing or empty!")
             return jsonify({"error": "Transcript required"}), 400
 
-        print("✅ Transcript check passed. Calling GPT...")
+        print("✅ Calling GPT...")
 
         response = client.chat.completions.create(
             model="gpt-4o",
@@ -61,9 +54,7 @@ Summarize the key themes of the meeting, then extract:
 2. Detailed user stories using the format: “As a [user], I want [feature] so that [benefit]”
 3. Acceptance criteria for each story using numbered scope that's important to complete and easy to understand.
 
-Use clean formatting, group related stories together, and ensure everything is clear enough for an engineer to begin implementation with minimal follow-up.
-
-Be concise, structured, and assume an audience of designers and developers."""
+Use clean formatting, group related stories together, and ensure everything is clear enough for an engineer to begin implementation with minimal follow-up."""
                 },
                 {
                     "role": "user",
@@ -104,14 +95,14 @@ Be concise, structured, and assume an audience of designers and developers."""
 
 @app.route("/notion-transcript", methods=["POST"])
 def notion_transcript():
-    data = request.get_json()
-    page_id = data.get("page_id")
-    meeting_title = data.get("meeting_title", "Untitled Meeting")
-
-    if not page_id:
-        return jsonify({"error": "Missing Notion page_id"}), 400
-
     try:
+        data = request.get_json()
+        page_id = data.get("page_id")
+        meeting_title = data.get("meeting_title", "Untitled Meeting")
+
+        if not page_id:
+            return jsonify({"error": "Missing Notion page_id"}), 400
+
         blocks = notion.blocks.children.list(page_id)
         transcript = ""
 
@@ -131,7 +122,7 @@ def notion_transcript():
         webhook_response = requests.post(webhook_url, json=payload)
 
         if webhook_response.status_code != 200:
-            print("⚠️ Webhook failed:", webhook_response.text)
+            print("⚠️ Webhook call failed:", webhook_response.text)
             return jsonify({"error": "Webhook call failed"}), 500
 
         return jsonify({"status": "Notion transcript sent to GPT"}), 200
