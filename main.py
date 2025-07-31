@@ -2,13 +2,19 @@ from flask import Flask, request, jsonify
 from openai import OpenAI
 import requests
 import os
+from notion_client import Client as NotionClient
 
 app = Flask(__name__)
 
 # Load environment variables
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 slack_token = os.getenv("SLACK_BOT_TOKEN")
-channel_id = "C098402A8KF"  # Replace with your actual Slack channel ID
+notion_token = os.getenv("NOTION_TOKEN")
+channel_id = "C098402A8KF"  # Your Slack channel ID
+webhook_url = os.getenv("WEBHOOK_URL") or "https://skynet-72b6.onrender.com/fathom-webhook"
+
+# Initialize Notion client
+notion = NotionClient(auth=notion_token)
 
 @app.route("/", methods=["GET"])
 def health_check():
@@ -17,7 +23,6 @@ def health_check():
 @app.route("/fathom-webhook", methods=["POST"])
 def handle_fathom():
     try:
-        # Log headers and raw request
         print("🚨 Headers:", dict(request.headers))
         print("🚨 Raw data (bytes):", request.data)
 
@@ -30,7 +35,6 @@ def handle_fathom():
         data = request.get_json(force=True)
         print("✅ Parsed JSON:", data)
 
-        # Extract fields
         transcript = data.get("transcript", "").strip()
         meeting_title = data.get("meeting_title", "Untitled Meeting").strip()
 
@@ -43,7 +47,6 @@ def handle_fathom():
 
         print("✅ Transcript check passed. Calling GPT...")
 
-        # Send to OpenAI GPT-4o
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
@@ -71,7 +74,6 @@ Be concise, structured, and assume an audience of designers and developers."""
         summary = response.choices[0].message.content
         print("✅ GPT summary generated.")
 
-        # Post to Slack via Bot
         slack_payload = {
             "channel": channel_id,
             "text": f"*📋 {meeting_title}*\n\n```{summary}```"
@@ -96,6 +98,46 @@ Be concise, structured, and assume an audience of designers and developers."""
     except Exception as e:
         print("❌ Exception occurred:", str(e))
         return jsonify({"error": "Internal server error"}), 400
+
+
+@app.route("/notion-transcript", methods=["POST"])
+def notion_transcript():
+    data = request.get_json()
+    page_id = data.get("page_id")
+    meeting_title = data.get("meeting_title", "Untitled Meeting")
+
+    if not page_id:
+        return jsonify({"error": "Missing Notion page_id"}), 400
+
+    try:
+        blocks = notion.blocks.children.list(page_id)
+        transcript = ""
+
+        for block in blocks.get("results", []):
+            if block["type"] == "paragraph":
+                for rt in block["paragraph"].get("rich_text", []):
+                    transcript += rt.get("plain_text", "") + "\n"
+
+        if not transcript.strip():
+            return jsonify({"error": "Transcript is empty"}), 400
+
+        payload = {
+            "transcript": transcript.strip(),
+            "meeting_title": meeting_title
+        }
+
+        webhook_response = requests.post(webhook_url, json=payload)
+
+        if webhook_response.status_code != 200:
+            print("⚠️ Webhook failed:", webhook_response.text)
+            return jsonify({"error": "Webhook call failed"}), 500
+
+        return jsonify({"status": "Notion transcript sent to GPT"}), 200
+
+    except Exception as e:
+        print("❌ Error with Notion fetch:", str(e))
+        return jsonify({"error": str(e)}), 500
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
