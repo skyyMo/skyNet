@@ -1,7 +1,13 @@
 from flask import Flask, request, jsonify
-import traceback
+from openai import OpenAI
+import requests
+import os
 
 app = Flask(__name__)
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+slack_token = os.getenv("SLACK_BOT_TOKEN")
+channel_id = "C098402A8KF"
 
 @app.route("/", methods=["GET"])
 def health_check():
@@ -10,38 +16,57 @@ def health_check():
 @app.route("/fathom-webhook", methods=["POST"])
 def handle_fathom():
     try:
-        print("🚨 Headers:", dict(request.headers))
-        print("🚨 Raw data:", request.data)
+        raw_data = request.data.decode("utf-8", errors="replace").strip()
+        print("🚨 Raw body:\n", raw_data)
 
         try:
-            body_str = request.data.decode('utf-8')
-            print("🚨 Decoded body:", body_str)
-        except Exception as decode_err:
-            print("❌ Decode error:", decode_err)
-
-        data = request.get_json(force=True)
-        print("✅ Parsed JSON:", data)
+            data = request.get_json(force=True)
+        except Exception as e:
+            print("❌ JSON decode error:", str(e))
+            return jsonify({"error": "Invalid JSON payload"}), 400
 
         transcript = data.get("transcript", "").strip()
         meeting_title = data.get("meeting_title", "Untitled Meeting").strip()
 
-        print(f"📝 Transcript: {transcript}")
-        print(f"📝 Meeting Title: {meeting_title}")
-
         if not transcript:
-            print("❌ Error: Transcript is missing or empty!")
             return jsonify({"error": "Transcript required"}), 400
 
-        return jsonify({
-            "status": "Webhook received",
-            "meeting_title": meeting_title,
-            "transcript_preview": transcript[:100] + "..."
-        }), 200
+        print(f"📝 Title: {meeting_title}")
+        print(f"📝 Transcript Preview: {transcript[:200]}...")
+
+        # GPT processing
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are a senior product manager and agile coach helping to convert meeting transcripts into clear, actionable development specs.\n\nSummarize the key themes of the meeting, then extract:\n1. High-level epics\n2. Detailed user stories using the format: “As a [user], I want [feature] so that [benefit]”\n3. Acceptance criteria for each story using numbered scope that's important to complete and easy to understand.\n\nBe concise, structured, and assume an audience of designers and developers."},
+                {"role": "user", "content": transcript}
+            ],
+            temperature=0.3
+        )
+
+        summary = response.choices[0].message.content
+
+        # Post to Slack
+        slack_payload = {
+            "channel": channel_id,
+            "text": f"*📋 {meeting_title}*\n\n```{summary}```"
+        }
+
+        headers = {
+            "Authorization": f"Bearer {slack_token}",
+            "Content-Type": "application/json"
+        }
+
+        slack_response = requests.post("https://slack.com/api/chat.postMessage", json=slack_payload, headers=headers)
+
+        if slack_response.status_code != 200 or not slack_response.json().get("ok"):
+            print("⚠️ Slack error:", slack_response.text)
+
+        return jsonify({"status": "success"}), 200
 
     except Exception as e:
-        print("❌ Exception occurred:")
-        traceback.print_exc()
-        return jsonify({"error": "Internal server error"}), 400
+        print("❌ Unexpected exception:", str(e))
+        return jsonify({"error": "Internal server error"}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
