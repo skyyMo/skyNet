@@ -17,13 +17,20 @@ def health_check():
 def handle_fathom():
     try:
         raw_data = request.data.decode("utf-8", errors="replace").strip()
-        print("🚨 Raw body:\n", raw_data)
+raw_data = request.data.decode("utf-8", errors="replace").strip()
+print("🚨 Raw body string:\n", raw_data)
 
-        try:
-            data = request.get_json(force=True)
-        except Exception as e:
-            print("❌ JSON decode error:", str(e))
-            return jsonify({"error": "Invalid JSON payload"}), 400
+# 🧼 Clean invisible characters (e.g., zero-width spaces, smart quotes)
+import re
+cleaned_data = re.sub(r"[\u200b-\u200f\u202a-\u202e\u2060-\u206f]", "", raw_data)
+
+try:
+    import json
+    data = json.loads(cleaned_data)
+except Exception as e:
+    print("❌ JSON manual decode failed:", str(e))
+    return jsonify({"error": "Invalid JSON"}), 400
+
 
         transcript = data.get("transcript", "").strip()
         meeting_title = data.get("meeting_title", "Untitled Meeting").strip()
