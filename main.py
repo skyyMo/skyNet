@@ -10,7 +10,7 @@ app = Flask(__name__)
 # Environment variables
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 slack_token = os.getenv("SLACK_BOT_TOKEN")
-channel_id = os.getenv("SLACK_CHANNEL_ID")
+channel_id = os.getenv("SLACK_CHANNEL_ID") or "C098402A8KF"
 
 jira_domain = os.getenv("JIRA_DOMAIN")
 jira_email = os.getenv("JIRA_EMAIL")
