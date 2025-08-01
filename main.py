@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 app = Flask(__name__)
 
-# 🔑 API Clients & Constants
+# 🔑 API Clients & Secrets
 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 slack_token = os.getenv("SLACK_BOT_TOKEN")
 slack_channel_id = os.getenv("SLACK_CHANNEL_ID")
@@ -19,7 +19,7 @@ jira_email = os.getenv("JIRA_EMAIL")
 jira_token = os.getenv("JIRA_API_TOKEN")
 jira_project = os.getenv("JIRA_PROJECT_KEY")
 
-# 📄 Load GPT prompt
+# 📄 Load prompt from file
 with open("gpt_prompt.txt", "r") as f:
     GPT_PROMPT = f.read()
 
@@ -27,7 +27,7 @@ ZERO_WIDTH_CHARS = r"[\u200b-\u200f\u202a-\u202e\u2060-\u206f]"
 
 @app.route("/", methods=["GET"])
 def health_check():
-    return "✅ Fathom-GPT-Slack-Jira webhook is live!"
+    return "✅ Fathom-GPT-Jira webhook is live!"
 
 @app.route("/fathom-webhook", methods=["POST"])
 def handle_fathom():
@@ -45,7 +45,7 @@ def handle_fathom():
         if not transcript:
             return jsonify({"error": "Transcript required"}), 400
 
-        # 🧠 GPT Processing
+        # 🧠 Generate structured story summary with GPT
         gpt_response = openai_client.chat.completions.create(
             model="gpt-4o",
             messages=[
@@ -56,20 +56,20 @@ def handle_fathom():
         )
         summary = gpt_response.choices[0].message.content
 
-        # 💬 Post to Slack
+        # 💬 Post summary to Slack
         slack_payload = {
             "channel": slack_channel_id,
             "text": f"*📋 {title}*\n\n```{summary}```"
         }
-        headers = {
+        slack_headers = {
             "Authorization": f"Bearer {slack_token}",
             "Content-Type": "application/json"
         }
-        slack_res = requests.post("https://slack.com/api/chat.postMessage", json=slack_payload, headers=headers)
-        if slack_res.status_code != 200 or not slack_res.json().get("ok"):
-            print("⚠️ Slack error:", slack_res.text)
+        slack_response = requests.post("https://slack.com/api/chat.postMessage", json=slack_payload, headers=slack_headers)
+        if slack_response.status_code != 200 or not slack_response.json().get("ok"):
+            print("⚠️ Slack error:", slack_response.text)
 
-        # 📌 Create Jira Tickets
+        # 🧾 Parse and create Jira tickets
         tickets = parse_gpt_summary(summary)
         for ticket in tickets:
             create_jira_issue(ticket["summary"], ticket["description"])
@@ -77,8 +77,8 @@ def handle_fathom():
         return jsonify({"status": "success"}), 200
 
     except Exception as e:
-        print("❌ Error:", str(e))
-        return jsonify({"error": "Internal error"}), 500
+        print("❌ Exception:", str(e))
+        return jsonify({"error": "Internal server error"}), 500
 
 def parse_gpt_summary(gpt_text):
     sections = re.split(r"\n+---+\n+", gpt_text)
@@ -127,6 +127,20 @@ def create_jira_issue(summary, description):
 
     res = requests.post(url, headers=headers, auth=auth, json=payload)
     if res.status_code == 201:
-        print(f"✅ Created: {res.json()['key']} - {summary}")
+        issue_key = res.json()["key"]
+        print(f"✅ Created: {issue_key} - {summary}")
+
+        # 📨 Slack you the Jira ticket link
+        slack_payload = {
+            "channel": slack_channel_id,
+            "text": f"📌 *New Jira Story Created:* <https://{jira_domain}/browse/{issue_key}|{issue_key}> – {summary}"
+        }
+        slack_headers = {
+            "Authorization": f"Bearer {slack_token}",
+            "Content-Type": "application/json"
+        }
+        slack_response = requests.post("https://slack.com/api/chat.postMessage", json=slack_payload, headers=slack_headers)
+        if slack_response.status_code != 200 or not slack_response.json().get("ok"):
+            print("⚠️ Slack Jira link failed:", slack_response.text)
     else:
-        print(f"❌ Failed: {summary} | {res.status_code}: {res.text}")
+        print(f"❌ Jira create failed: {summary} | {res.status_code} | {res.text}")
