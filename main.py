@@ -11,6 +11,27 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 slack_token = os.getenv("SLACK_BOT_TOKEN")
 channel_id = "C098402A8KF"
 
+system_prompt = (
+    "You are a senior product manager at OddsShopper, working on two product lines: "
+    "PortfolioEV (a tool that helps sports bettors build diversified, profitable bet portfolios) "
+    "and Tails (a platform for discovering and following betting experts). Your job is to turn meeting transcripts "
+    "into clear, concise Jira stories and product specs.\n\n"
+
+    "Analyze the transcript and output:\n\n"
+    "**1. Meeting Summary:** High-level overview of the topics discussed.\n"
+    "**2. Epics:** Groupings of related stories tied to sports bettor pain points (e.g., bankroll stress, content discovery).\n"
+    "**3. User Stories:** Use the format:\n"
+    "`Title: [short story title]`\n"
+    "`Story:` As a [user], I want [feature] so that [benefit].`\n"
+    "`Acceptance Criteria:`\n"
+    `  1. [First requirement]\n`
+    `  2. [Second requirement]`\n\n"
+    
+    "Only include unique stories. Do not repeat descriptions, stories, or criteria. Write all output in Markdown format so it’s easy to copy into Jira or Notion.\n\n"
+    
+    "Make sure the stories are tightly scoped and relevant to real problems sports bettors face in the PortfolioEV or Tails products."
+)
+
 @app.route("/", methods=["GET"])
 def health_check():
     return "Fathom-GPT-Slack webhook is live!"
@@ -21,7 +42,7 @@ def handle_fathom():
         raw_data = request.data.decode("utf-8", errors="replace").strip()
         print("🚨 Raw body string:\n", raw_data)
 
-        # Remove invisible control characters (e.g., zero-width spaces)
+        # Clean invisible Unicode characters
         cleaned_data = re.sub(r"[\u200b-\u200f\u202a-\u202e\u2060-\u206f]", "", raw_data)
 
         try:
@@ -39,21 +60,7 @@ def handle_fathom():
         print(f"📝 Title: {meeting_title}")
         print(f"📝 Transcript Preview: {transcript[:200]}...")
 
-        # 🧠 GPT prompt tailored for OddsShopper's PortfolioEV and Tails
-        system_prompt = (
-            "You are a senior product manager at OddsShopper working on two product lines: "
-            "PortfolioEV (a tool that helps sports bettors build diversified, profitable bet portfolios) "
-            "and Tails (a platform for discovering and following betting experts). Your job is to analyze "
-            "meeting transcripts and output high-quality product documentation.\n\n"
-            "Start by summarizing the key themes discussed in the meeting. Then extract:\n\n"
-            "1. **Probelm Statements** — clearly defined problem-solution groupings tied to sports bettor pain points\n"
-            "2. **User Stories** — using the format: 'As a [user], I want [feature] so that [benefit]'\n"
-            "3. **Story Titles** — short, actionable labels for each story (no duplicates)\n"
-            "4. **Acceptance Criteria** — concise, numbered lists of what success looks like\n\n"
-            "Avoid duplicate text. Do not repeat the same story or criteria multiple times. Tailor your output "
-            "to real challenges bettors might face, like bankroll stress, app confusion, retention issues, or unclear value."
-        )
-
+        # GPT processing
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
@@ -66,7 +73,7 @@ def handle_fathom():
         summary = response.choices[0].message.content
         print("✅ GPT Summary Output:\n", summary)
 
-        # 📬 Post to Slack
+        # Post to Slack
         slack_payload = {
             "channel": channel_id,
             "text": f"*📋 {meeting_title}*\n\n```{summary}```"
