@@ -9,30 +9,46 @@ app = Flask(__name__)
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 slack_token = os.getenv("SLACK_BOT_TOKEN")
-channel_id = "C098402A8KF"
+channel_id = os.getenv("SLACK_CHANNEL_ID")
+
+jira_domain = os.getenv("JIRA_DOMAIN")
+jira_email = os.getenv("JIRA_EMAIL")
+jira_api_token = os.getenv("JIRA_API_TOKEN")
+jira_project_key = os.getenv("JIRA_PROJECT_KEY")
 
 system_prompt = (
-    "You are a senior product manager at OddsShopper, working on two product lines: "
-    "PortfolioEV (a tool that helps sports bettors build diversified, profitable bet portfolios) "
-    "and Tails (a platform for discovering and following betting experts). Your job is to turn meeting transcripts "
-    "into clear, concise Jira stories and product specs.\n\n"
-    "Analyze the transcript and output:\n\n"
-    "**1. Meeting Summary:** High-level overview of the topics discussed.\n"
-    "**2. Epics:** Groupings of related stories tied to sports bettor pain points (e.g., bankroll stress, content discovery).\n"
-    "**3. User Stories:** Use the format:\n"
-    "`Title: [short story title]`\n"
-    "`Story:` As a [user], I want [feature] so that [benefit].`\n"
-    "`Acceptance Criteria:`\n"
-    "  1. [First requirement]\n"
-    "  2. [Second requirement]\n\n"
-    "Only include unique stories. Do not repeat descriptions, stories, or criteria. Write all output in Markdown format "
-    "so it’s easy to copy into Jira or Notion.\n\n"
-    "Make sure the stories are tightly scoped and relevant to real problems sports bettors face in the PortfolioEV or Tails products."
+    "You are a senior product manager helping turn meeting transcripts into clear, actionable Jira tickets. "
+    "Your goal is to identify the key product areas discussed, extract well-formed user stories using the format: \"As a [user], I want [feature] so that [benefit]\", and define strong acceptance criteria in a numbered list. "
+    "Group stories by Epic if possible. Provide story titles that are concise and descriptive."
 )
+
+def create_jira_ticket(title, description):
+    url = f"https://{jira_domain}/rest/api/3/issue"
+    auth = (jira_email, jira_api_token)
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "fields": {
+            "project": {"key": jira_project_key},
+            "summary": title,
+            "description": description,
+            "issuetype": {"name": "Task"}
+        }
+    }
+    response = requests.post(url, headers=headers, auth=auth, json=payload)
+    if response.status_code == 201:
+        issue_key = response.json().get("key")
+        print(f"✅ Created Jira issue: {issue_key}")
+        return issue_key
+    else:
+        print(f"❌ Jira error: {response.text}")
+        return None
 
 @app.route("/", methods=["GET"])
 def health_check():
-    return "Fathom-GPT-Slack webhook is live!"
+    return "Fathom-GPT-JIRA-Slack webhook is live!"
 
 @app.route("/fathom-webhook", methods=["POST"])
 def handle_fathom():
@@ -40,14 +56,8 @@ def handle_fathom():
         raw_data = request.data.decode("utf-8", errors="replace").strip()
         print("🚨 Raw body string:\n", raw_data)
 
-        # Clean invisible Unicode characters
         cleaned_data = re.sub(r"[\u200b-\u200f\u202a-\u202e\u2060-\u206f]", "", raw_data)
-
-        try:
-            data = json.loads(cleaned_data)
-        except Exception as e:
-            print("❌ JSON manual decode failed:", str(e))
-            return jsonify({"error": "Invalid JSON"}), 400
+        data = json.loads(cleaned_data)
 
         transcript = data.get("transcript", "").strip()
         meeting_title = data.get("meeting_title", "Untitled Meeting").strip()
@@ -58,7 +68,6 @@ def handle_fathom():
         print(f"📝 Title: {meeting_title}")
         print(f"📝 Transcript Preview: {transcript[:200]}...")
 
-        # GPT processing
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
@@ -71,23 +80,28 @@ def handle_fathom():
         summary = response.choices[0].message.content
         print("✅ GPT Summary Output:\n", summary)
 
-        # Post to Slack
-        slack_payload = {
-            "channel": channel_id,
-            "text": f"*📋 {meeting_title}*\n\n```{summary}```"
-        }
+        # Parse and create JIRA tickets
+        stories = re.findall(r"\*\*Title:\*\* (.*?)\nStory: (.*?)\nAcceptance Criteria:(.*?)\n(?=\*\*Title:|$)", summary, re.DOTALL)
+        jira_links = []
+        for title, story, criteria in stories:
+            description = f"{story}\n\n*Acceptance Criteria:*\n{criteria.strip()}"
+            issue_key = create_jira_ticket(title.strip(), description.strip())
+            if issue_key:
+                jira_links.append(f"- <https://{jira_domain}/browse/{issue_key}|{issue_key}: {title.strip()}>")
 
+        # Post to Slack
+        slack_message = f"*📋 {meeting_title} — {len(jira_links)} stories created:*
+\n" + "\n".join(jira_links)
+        slack_payload = {"channel": channel_id, "text": slack_message}
         headers = {
             "Authorization": f"Bearer {slack_token}",
             "Content-Type": "application/json"
         }
-
         slack_response = requests.post("https://slack.com/api/chat.postMessage", json=slack_payload, headers=headers)
-
         if slack_response.status_code != 200 or not slack_response.json().get("ok"):
             print("⚠️ Slack error:", slack_response.text)
 
-        return jsonify({"status": "success"}), 200
+        return jsonify({"status": "success", "stories_created": len(jira_links)}), 200
 
     except Exception as e:
         print("❌ Unexpected exception:", str(e))
