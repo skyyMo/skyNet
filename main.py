@@ -7,21 +7,25 @@ import re
 
 app = Flask(__name__)
 
+# Environment variables
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 slack_token = os.getenv("SLACK_BOT_TOKEN")
 channel_id = os.getenv("SLACK_CHANNEL_ID")
-
 jira_domain = os.getenv("JIRA_DOMAIN")
 jira_email = os.getenv("JIRA_EMAIL")
 jira_api_token = os.getenv("JIRA_API_TOKEN")
 jira_project_key = os.getenv("JIRA_PROJECT_KEY")
 
+# GPT prompt
 system_prompt = (
     "You are a senior product manager helping turn meeting transcripts into clear, actionable Jira tickets. "
-    "Your goal is to identify the key product areas discussed, extract well-formed user stories using the format: \"As a [user], I want [feature] so that [benefit]\", and define strong acceptance criteria in a numbered list. "
-    "Group stories by Epic if possible. Provide story titles that are concise and descriptive."
+    "Your goal is to identify the key product areas discussed, extract well-formed user stories using the format: "
+    "\"As a [user], I want [feature] so that [benefit]\", and define strong acceptance criteria in a numbered list. "
+    "Group stories by Epic if possible. Provide story titles that are concise and descriptive. "
+    "You are writing tickets for OddsShopper's sports betting platform, focusing on improving two core products: PortfolioEV and Tails."
 )
 
+# JIRA creation helper
 def create_jira_ticket(title, description):
     url = f"https://{jira_domain}/rest/api/3/issue"
     auth = (jira_email, jira_api_token)
@@ -56,6 +60,7 @@ def handle_fathom():
         raw_data = request.data.decode("utf-8", errors="replace").strip()
         print("🚨 Raw body string:\n", raw_data)
 
+        # Clean invisible characters
         cleaned_data = re.sub(r"[\u200b-\u200f\u202a-\u202e\u2060-\u206f]", "", raw_data)
         data = json.loads(cleaned_data)
 
@@ -68,6 +73,7 @@ def handle_fathom():
         print(f"📝 Title: {meeting_title}")
         print(f"📝 Transcript Preview: {transcript[:200]}...")
 
+        # GPT call
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
@@ -77,21 +83,25 @@ def handle_fathom():
             temperature=0.3
         )
 
-        summary = response.choices[0].message.content
+        summary = response.choices[0].message.content.strip()
         print("✅ GPT Summary Output:\n", summary)
 
-        # Parse and create JIRA tickets
-        stories = re.findall(r"\*\*Title:\*\* (.*?)\nStory: (.*?)\nAcceptance Criteria:(.*?)\n(?=\*\*Title:|$)", summary, re.DOTALL)
+        # Extract stories
+        stories = re.findall(
+            r"\*\*Title:\*\* (.*?)\nStory: (.*?)\nAcceptance Criteria:(.*?)\n(?=\*\*Title:|\Z)",
+            summary,
+            re.DOTALL
+        )
+
         jira_links = []
         for title, story, criteria in stories:
-            description = f"{story}\n\n*Acceptance Criteria:*\n{criteria.strip()}"
-            issue_key = create_jira_ticket(title.strip(), description.strip())
+            description = f"{story.strip()}\n\n*Acceptance Criteria:*\n{criteria.strip()}"
+            issue_key = create_jira_ticket(title.strip(), description)
             if issue_key:
                 jira_links.append(f"- <https://{jira_domain}/browse/{issue_key}|{issue_key}: {title.strip()}>")
 
-        # Post to Slack
-        slack_message = f"*📋 {meeting_title} — {len(jira_links)} stories created:*"
-\n" + "\n".join(jira_links)
+        # Send Slack message
+        slack_message = f"*📋 {meeting_title} — {len(jira_links)} stories created:*\n\n" + "\n".join(jira_links)
         slack_payload = {"channel": channel_id, "text": slack_message}
         headers = {
             "Authorization": f"Bearer {slack_token}",
