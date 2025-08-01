@@ -11,6 +11,7 @@ app = Flask(__name__)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 slack_token = os.getenv("SLACK_BOT_TOKEN")
 channel_id = os.getenv("SLACK_CHANNEL_ID")
+
 jira_domain = os.getenv("JIRA_DOMAIN")
 jira_email = os.getenv("JIRA_EMAIL")
 jira_api_token = os.getenv("JIRA_API_TOKEN")
@@ -22,10 +23,9 @@ system_prompt = (
     "Your goal is to identify the key product areas discussed, extract well-formed user stories using the format: "
     "\"As a [user], I want [feature] so that [benefit]\", and define strong acceptance criteria in a numbered list. "
     "Group stories by Epic if possible. Provide story titles that are concise and descriptive. "
-    "You are writing tickets for OddsShopper's sports betting platform, focusing on improving two core products: PortfolioEV and Tails."
+    "Assume the context is sports betting and the products PortfolioEV and Tails under the OddsShopper brand."
 )
 
-# JIRA creation helper
 def create_jira_ticket(title, description):
     url = f"https://{jira_domain}/rest/api/3/issue"
     auth = (jira_email, jira_api_token)
@@ -58,14 +58,17 @@ def health_check():
 def handle_fathom():
     try:
         raw_data = request.data.decode("utf-8", errors="replace").strip()
-        # Log raw data for inspection
-print("🚨 Raw body string:\n", raw_data)
-print("🔍 Raw (repr):", repr(raw_data))  # Show hidden characters
+        print("🚨 Raw body string:\n", raw_data)
+        print("🔍 Raw (repr):", repr(raw_data))
 
-# Clean invisible and invalid control characters
-cleaned_data = re.sub(r"[^\x09\x0A\x0D\x20-\x7E\x85\xA0-\uD7FF\uE000-\uFFFD]", "", raw_data)
+        # Clean invisible/control characters
+        cleaned_data = re.sub(r"[^\x09\x0A\x0D\x20-\x7E\x85\xA0-\uD7FF\uE000-\uFFFD]", "", raw_data)
 
-        data = json.loads(cleaned_data)
+        try:
+            data = json.loads(cleaned_data)
+        except Exception as e:
+            print("❌ JSON decode failed:", str(e))
+            return jsonify({"error": "Invalid JSON"}), 400
 
         transcript = data.get("transcript", "").strip()
         meeting_title = data.get("meeting_title", "Untitled Meeting").strip()
@@ -76,7 +79,6 @@ cleaned_data = re.sub(r"[^\x09\x0A\x0D\x20-\x7E\x85\xA0-\uD7FF\uE000-\uFFFD]", "
         print(f"📝 Title: {meeting_title}")
         print(f"📝 Transcript Preview: {transcript[:200]}...")
 
-        # GPT call
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
@@ -86,25 +88,24 @@ cleaned_data = re.sub(r"[^\x09\x0A\x0D\x20-\x7E\x85\xA0-\uD7FF\uE000-\uFFFD]", "
             temperature=0.3
         )
 
-        summary = response.choices[0].message.content.strip()
+        summary = response.choices[0].message.content
         print("✅ GPT Summary Output:\n", summary)
 
-        # Extract stories
-        stories = re.findall(
-            r"\*\*Title:\*\* (.*?)\nStory: (.*?)\nAcceptance Criteria:(.*?)\n(?=\*\*Title:|\Z)",
-            summary,
-            re.DOTALL
-        )
-
+        # Extract Jira stories
+        stories = re.findall(r"\*\*Title:\*\* (.*?)\nStory: (.*?)\nAcceptance Criteria:(.*?)\n(?=\*\*Title:|$)", summary, re.DOTALL)
         jira_links = []
         for title, story, criteria in stories:
             description = f"{story.strip()}\n\n*Acceptance Criteria:*\n{criteria.strip()}"
-            issue_key = create_jira_ticket(title.strip(), description)
+            issue_key = create_jira_ticket(title.strip(), description.strip())
             if issue_key:
                 jira_links.append(f"- <https://{jira_domain}/browse/{issue_key}|{issue_key}: {title.strip()}>")
 
-        # Send Slack message
-        slack_message = f"*📋 {meeting_title} — {len(jira_links)} stories created:*\n\n" + "\n".join(jira_links)
+        # Post result to Slack
+        if jira_links:
+            slack_message = f"*📋 {meeting_title} — {len(jira_links)} stories created:*\n" + "\n".join(jira_links)
+        else:
+            slack_message = f"*📋 {meeting_title} — No stories detected from GPT output.*"
+
         slack_payload = {"channel": channel_id, "text": slack_message}
         headers = {
             "Authorization": f"Bearer {slack_token}",
