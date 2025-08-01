@@ -61,7 +61,8 @@ def handle_fathom():
         print("🚨 Raw body string:\n", raw_data)
 
         # Clean invisible characters
-        cleaned_data = re.sub(r"[\u200b-\u200f\u202a-\u202e\u2060-\u206f]", "", raw_data)
+        # Clean invisible and invalid control characters (beyond zero-width Unicode)
+        cleaned_data = re.sub(r"[^\x09\x0A\x0D\x20-\x7E\x85\xA0-\uD7FF\uE000-\uFFFD]", "", raw_data)
         data = json.loads(cleaned_data)
 
         transcript = data.get("transcript", "").strip()
