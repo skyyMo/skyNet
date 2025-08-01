@@ -19,9 +19,29 @@ jira_email = os.getenv("JIRA_EMAIL")
 jira_token = os.getenv("JIRA_API_TOKEN")
 jira_project = os.getenv("JIRA_PROJECT_KEY")
 
-# 📄 Load prompt from file
-with open("gpt_prompt.txt", "r") as f:
-    GPT_PROMPT = f.read()
+# 🧠 Inline GPT Prompt
+GPT_PROMPT = """
+You are a senior product manager and agile coach. Your task is to convert a meeting transcript into clear, structured development documentation.
+
+First, provide a concise summary of key themes discussed in the meeting.
+
+Then, for each major topic, extract:
+
+1. Problem Statement
+Briefly explain the core problem or opportunity this work is addressing.
+
+2. Description
+Summarize the context, scope, and any relevant background details needed for designers and developers to understand the feature or task.
+
+3. User Story
+Use the format:
+“As a [type of user], I want [feature or behavior] so that [user benefit or value].”
+
+4. Acceptance Criteria
+List specific, numbered criteria that must be met for the story to be considered complete. Use a clear and testable format.
+
+Be concise, structured, and audience-aware — this will be read by product, design, and engineering stakeholders.
+"""
 
 ZERO_WIDTH_CHARS = r"[\u200b-\u200f\u202a-\u202e\u2060-\u206f]"
 
@@ -130,7 +150,7 @@ def create_jira_issue(summary, description):
         issue_key = res.json()["key"]
         print(f"✅ Created: {issue_key} - {summary}")
 
-        # 📨 Slack you the Jira ticket link
+        # 📨 Slack Jira link
         slack_payload = {
             "channel": slack_channel_id,
             "text": f"📌 *New Jira Story Created:* <https://{jira_domain}/browse/{issue_key}|{issue_key}> – {summary}"
