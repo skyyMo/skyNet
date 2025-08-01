@@ -65,7 +65,10 @@ def handle_fathom():
         if not transcript:
             return jsonify({"error": "Transcript required"}), 400
 
-        # 🧠 Generate structured story summary with GPT
+        print(f"📣 Slack channel ID: {slack_channel_id}")
+        print(f"📝 Meeting Title: {title}")
+
+        # 🧠 GPT processing
         gpt_response = openai_client.chat.completions.create(
             model="gpt-4o",
             messages=[
@@ -83,7 +86,7 @@ def handle_fathom():
         }
         slack_headers = {
             "Authorization": f"Bearer {slack_token}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json; charset=utf-8"
         }
         slack_response = requests.post("https://slack.com/api/chat.postMessage", json=slack_payload, headers=slack_headers)
         if slack_response.status_code != 200 or not slack_response.json().get("ok"):
@@ -128,7 +131,7 @@ def parse_gpt_summary(gpt_text):
 
     return tickets
 
-def create_jira_issue(summary, description):
+def create_jira_issue(summary, description_text):
     url = f"https://{jira_domain}/rest/api/3/issue"
     auth = HTTPBasicAuth(jira_email, jira_token)
     headers = {
@@ -136,11 +139,23 @@ def create_jira_issue(summary, description):
         "Content-Type": "application/json"
     }
 
+    # Convert description to ADF format
+    adf_description = {
+        "type": "doc",
+        "version": 1,
+        "content": [
+            {
+                "type": "paragraph",
+                "content": [{"type": "text", "text": description_text[:3000]}]
+            }
+        ]
+    }
+
     payload = {
         "fields": {
             "project": {"key": jira_project},
             "summary": summary,
-            "description": description,
+            "description": adf_description,
             "issuetype": {"name": "Story"}
         }
     }
@@ -150,14 +165,14 @@ def create_jira_issue(summary, description):
         issue_key = res.json()["key"]
         print(f"✅ Created: {issue_key} - {summary}")
 
-        # 📨 Slack Jira link
+        # 📨 Slack you the Jira ticket link
         slack_payload = {
             "channel": slack_channel_id,
             "text": f"📌 *New Jira Story Created:* <https://{jira_domain}/browse/{issue_key}|{issue_key}> – {summary}"
         }
         slack_headers = {
             "Authorization": f"Bearer {slack_token}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json; charset=utf-8"
         }
         slack_response = requests.post("https://slack.com/api/chat.postMessage", json=slack_payload, headers=slack_headers)
         if slack_response.status_code != 200 or not slack_response.json().get("ok"):
