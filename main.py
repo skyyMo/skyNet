@@ -7,71 +7,79 @@ import re
 
 app = Flask(__name__)
 
-# Load API keys from environment variables
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Initialize clients and environment variables
+openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 slack_token = os.getenv("SLACK_BOT_TOKEN")
-channel_id = "C098402A8KF"
+slack_channel_id = "C098402A8KF"
+
+# Constants
+GPT_MODEL = "gpt-4o"
+GPT_PROMPT = (
+    "You are a senior product manager and agile coach. Your task is to convert a meeting transcript "
+    "into clear, structured development documentation.\n\n"
+    "First, provide a concise summary of key themes discussed in the meeting.\n\n"
+    "Then, for each major topic, extract:\n\n"
+    "1. Problem Statement\n"
+    "Briefly explain the core problem or opportunity this work is addressing.\n\n"
+    "2. Description\n"
+    "Summarize the context, scope, and any relevant background details needed for designers and developers to understand the feature or task.\n\n"
+    "3. User Story\n"
+    "Use the format:\n“As a [type of user], I want [feature or behavior] so that [user benefit or value].”\n\n"
+    "4. Acceptance Criteria\n"
+    "List specific, numbered criteria that must be met for the story to be considered complete. Use a clear and testable format.\n\n"
+    "Be concise, structured, and audience-aware — this will be read by product, design, and engineering stakeholders."
+)
+
+ZERO_WIDTH_CHARACTERS = r"[\u200b-\u200f\u202a-\u202e\u2060-\u206f]"
 
 @app.route("/", methods=["GET"])
 def health_check():
-    return "Fathom-GPT-Slack webhook is live!"
+    return "✅ Fathom-GPT-Slack webhook is live!"
 
 @app.route("/fathom-webhook", methods=["POST"])
-def handle_fathom():
+def handle_fathom_webhook():
     try:
-        # Read raw body and clean zero-width and invisible characters
-        raw_data = request.data.decode("utf-8", errors="replace").strip()
-        print("🚨 Raw body string:\n", raw_data)
-        cleaned_data = re.sub(r"[\u200b-\u200f\u202a-\u202e\u2060-\u206f]", "", raw_data)
+        # Read and clean raw body
+        raw_body = request.data.decode("utf-8", errors="replace").strip()
+        print("🚨 Raw body string:\n", raw_body)
 
-        # Try to parse JSON manually
+        cleaned_body = re.sub(ZERO_WIDTH_CHARACTERS, "", raw_body)
+
         try:
-            data = json.loads(cleaned_data)
-        except Exception as e:
-            print("❌ JSON manual decode failed:", str(e))
+            payload = json.loads(cleaned_body)
+        except json.JSONDecodeError as e:
+            print("❌ JSON decode error:", e)
             return jsonify({"error": "Invalid JSON"}), 400
 
-        # Extract and validate transcript
-        transcript = data.get("transcript", "").strip()
-        meeting_title = data.get("meeting_title", "Untitled Meeting").strip()
+        transcript = payload.get("transcript", "").strip()
+        meeting_title = payload.get("meeting_title", "Untitled Meeting").strip()
 
         if not transcript:
-            return jsonify({"error": "Transcript required"}), 400
+            return jsonify({"error": "Transcript is required"}), 400
 
-        print(f"📝 Title: {meeting_title}")
+        print(f"📝 Meeting Title: {meeting_title}")
         print(f"📝 Transcript Preview: {transcript[:200]}...")
 
-        # Send to OpenAI for dev story summary
-        response = client.chat.completions.create(
-            model="gpt-4o",
+        # Send prompt to GPT
+        gpt_response = openai_client.chat.completions.create(
+            model=GPT_MODEL,
             messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a senior product manager and agile coach helping to convert meeting transcripts "
-                        "into clear, actionable development specs.\n\n"
-                        "Summarize the key themes of the meeting, then extract:\n"
-                        "1. High-level epics\n"
-                        "2. Detailed user stories using the format: “As a [user], I want [feature] so that [benefit]”\n"
-                        "3. Acceptance criteria for each story using numbered scope that's important to complete and easy to understand.\n\n"
-                        "Be concise, structured, and assume an audience of designers and developers."
-                    )
-                },
+                {"role": "system", "content": GPT_PROMPT},
                 {"role": "user", "content": transcript}
             ],
             temperature=0.3
         )
 
-        summary = response.choices[0].message.content
+        summary = gpt_response.choices[0].message.content
         print("✅ GPT Summary Output:\n", summary)
 
-        # Post summary to Slack
+        # Format and post to Slack
         slack_payload = {
-            "channel": channel_id,
+            "channel": slack_channel_id,
             "text": f"*📋 {meeting_title}*\n\n```{summary}```"
         }
 
-        headers = {
+        slack_headers = {
             "Authorization": f"Bearer {slack_token}",
             "Content-Type": "application/json"
         }
@@ -79,16 +87,16 @@ def handle_fathom():
         slack_response = requests.post(
             "https://slack.com/api/chat.postMessage",
             json=slack_payload,
-            headers=headers
+            headers=slack_headers
         )
 
         if slack_response.status_code != 200 or not slack_response.json().get("ok"):
-            print("⚠️ Slack error:", slack_response.text)
+            print("⚠️ Slack API error:", slack_response.text)
 
         return jsonify({"status": "success"}), 200
 
     except Exception as e:
-        print("❌ Unexpected exception:", str(e))
+        print("❌ Unexpected error:", e)
         return jsonify({"error": "Internal server error"}), 500
 
 if __name__ == "__main__":
