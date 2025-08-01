@@ -19,6 +19,7 @@ jira_email = os.getenv("JIRA_EMAIL")
 jira_token = os.getenv("JIRA_API_TOKEN")
 jira_project = os.getenv("JIRA_PROJECT_KEY")
 
+# 📄 Load GPT prompt
 with open("gpt_prompt.txt", "r") as f:
     GPT_PROMPT = f.read()
 
@@ -26,7 +27,7 @@ ZERO_WIDTH_CHARS = r"[\u200b-\u200f\u202a-\u202e\u2060-\u206f]"
 
 @app.route("/", methods=["GET"])
 def health_check():
-    return "✅ Webhook is live!"
+    return "✅ Fathom-GPT-Slack-Jira webhook is live!"
 
 @app.route("/fathom-webhook", methods=["POST"])
 def handle_fathom():
@@ -64,9 +65,11 @@ def handle_fathom():
             "Authorization": f"Bearer {slack_token}",
             "Content-Type": "application/json"
         }
-        requests.post("https://slack.com/api/chat.postMessage", json=slack_payload, headers=headers)
+        slack_res = requests.post("https://slack.com/api/chat.postMessage", json=slack_payload, headers=headers)
+        if slack_res.status_code != 200 or not slack_res.json().get("ok"):
+            print("⚠️ Slack error:", slack_res.text)
 
-        # 🧾 Parse + Create Jira Tickets
+        # 📌 Create Jira Tickets
         tickets = parse_gpt_summary(summary)
         for ticket in tickets:
             create_jira_issue(ticket["summary"], ticket["description"])
@@ -108,7 +111,10 @@ def parse_gpt_summary(gpt_text):
 def create_jira_issue(summary, description):
     url = f"https://{jira_domain}/rest/api/3/issue"
     auth = HTTPBasicAuth(jira_email, jira_token)
-    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    }
 
     payload = {
         "fields": {
@@ -119,8 +125,8 @@ def create_jira_issue(summary, description):
         }
     }
 
-    response = requests.post(url, headers=headers, auth=auth, json=payload)
-    if response.status_code == 201:
-        print(f"✅ Created: {response.json()['key']} - {summary}")
+    res = requests.post(url, headers=headers, auth=auth, json=payload)
+    if res.status_code == 201:
+        print(f"✅ Created: {res.json()['key']} - {summary}")
     else:
-        print(f"❌ Failed: {summary} | {response.status_code}: {response.text}")
+        print(f"❌ Failed: {summary} | {res.status_code}: {res.text}")
