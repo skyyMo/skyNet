@@ -58,11 +58,13 @@ def health_check():
 def handle_fathom():
     try:
         raw_data = request.data.decode("utf-8", errors="replace").strip()
-        print("🚨 Raw body string:\n", raw_data)
+        # Log raw data for inspection
+print("🚨 Raw body string:\n", raw_data)
+print("🔍 Raw (repr):", repr(raw_data))  # Show hidden characters
 
-        # Clean invisible characters
-        # Clean invisible and invalid control characters (beyond zero-width Unicode)
-        cleaned_data = re.sub(r"[^\x09\x0A\x0D\x20-\x7E\x85\xA0-\uD7FF\uE000-\uFFFD]", "", raw_data)
+# Clean invisible and invalid control characters
+cleaned_data = re.sub(r"[^\x09\x0A\x0D\x20-\x7E\x85\xA0-\uD7FF\uE000-\uFFFD]", "", raw_data)
+
         data = json.loads(cleaned_data)
 
         transcript = data.get("transcript", "").strip()
