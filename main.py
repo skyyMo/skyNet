@@ -90,7 +90,7 @@ def handle_fathom():
                 jira_links.append(f"- <https://{jira_domain}/browse/{issue_key}|{issue_key}: {title.strip()}>")
 
         # Post to Slack
-        slack_message = f"*📋 {meeting_title} — {len(jira_links)} stories created:*
+        slack_message = f"*📋 {meeting_title} — {len(jira_links)} stories created:*"
 \n" + "\n".join(jira_links)
         slack_payload = {"channel": channel_id, "text": slack_message}
         headers = {
