@@ -19,7 +19,7 @@ jira_email = os.getenv("JIRA_EMAIL")
 jira_token = os.getenv("JIRA_API_TOKEN")
 jira_project = os.getenv("JIRA_PROJECT_KEY")
 
-# 🧠 Inline GPT Prompt
+# 🧠 GPT Prompt
 GPT_PROMPT = """
 You are a senior product manager and agile coach. Your task is to convert a meeting transcript into clear, structured development documentation.
 
@@ -79,6 +79,8 @@ def handle_fathom():
         )
         summary = gpt_response.choices[0].message.content
 
+        print("📄 Raw GPT Summary:\n", summary)
+
         # 💬 Post summary to Slack
         slack_payload = {
             "channel": slack_channel_id,
@@ -111,14 +113,14 @@ def parse_gpt_summary(gpt_text):
         if not section.strip():
             continue
 
-        # Match header like "**1. Search Improvement**"
+        # Match "**1. Some title**"
         title_match = re.search(r"\*\*\d+\.\s+(.*?)\*\*", section)
         summary = title_match.group(1).strip() if title_match else "Untitled"
 
-        # Match content blocks
         def extract_block(label):
-            pattern = rf"\*\*{re.escape(label)}:\*\*\s+(.*?)(?=\n\*\*|\Z)"
-            match = re.search(pattern, section, re.DOTALL)
+            # Match headers like "**Label:**" or "** Label **"
+            pattern = rf"\*\*?\s*{re.escape(label)}\s*:?\s*\*\*?\s*\n(.*?)(?=\n\*\*?\s*\w+|\Z)"
+            match = re.search(pattern, section, re.IGNORECASE | re.DOTALL)
             return match.group(1).strip() if match else None
 
         prob = extract_block("Problem Statement") or "[Missing problem statement]"
@@ -126,7 +128,6 @@ def parse_gpt_summary(gpt_text):
         user_story = extract_block("User Story") or "[Missing user story]"
         ac_raw = extract_block("Acceptance Criteria") or "[Missing acceptance criteria]"
 
-        # Format acceptance criteria
         ac_lines = re.findall(r"\d+\.\s+.*", ac_raw)
         ac_formatted = "\n".join(f"- {line}" for line in ac_lines) if ac_lines else f"- {ac_raw}"
 
@@ -143,7 +144,9 @@ def parse_gpt_summary(gpt_text):
 {ac_formatted}
 """
 
-        print(f"🧾 Parsed Ticket — Title: {summary}\nDescription Preview:\n{description[:200]}...\n")
+        print(f"🧾 Parsed Ticket — Title: {summary}")
+        print(f"📝 Description Preview:\n{description[:200]}...\n")
+
         tickets.append({"summary": summary, "description": description})
 
     return tickets
@@ -156,7 +159,7 @@ def create_jira_issue(summary, description_text):
         "Content-Type": "application/json"
     }
 
-    # Format Jira description as ADF (Atlassian Document Format)
+    # Format Jira description in Atlassian Document Format
     adf_description = {
         "type": "doc",
         "version": 1,
@@ -182,7 +185,7 @@ def create_jira_issue(summary, description_text):
         issue_key = res.json()["key"]
         print(f"✅ Created: {issue_key} - {summary}")
 
-        # Slack notification for created Jira story
+        # Post Jira link to Slack
         slack_payload = {
             "channel": slack_channel_id,
             "text": f"📌 *New Jira Story Created:* <https://{jira_domain}/browse/{issue_key}|{issue_key}> – {summary}"
