@@ -111,22 +111,39 @@ def parse_gpt_summary(gpt_text):
         if not section.strip():
             continue
 
+        # Match header like "**1. Search Improvement**"
         title_match = re.search(r"\*\*\d+\.\s+(.*?)\*\*", section)
         summary = title_match.group(1).strip() if title_match else "Untitled"
 
-        prob = re.search(r"\*\*Problem Statement:\*\*\s+(.*?)(?:\n|$)", section, re.DOTALL)
-        desc = re.search(r"\*\*Description:\*\*\s+(.*?)(?:\n|$)", section, re.DOTALL)
-        user_story = re.search(r"\*\*User Story:\*\*\s+(.*?)(?:\n|$)", section, re.DOTALL)
-        ac = re.search(r"\*\*Acceptance Criteria:\*\*\s+(.+)", section, re.DOTALL)
+        # Match content blocks
+        def extract_block(label):
+            pattern = rf"\*\*{re.escape(label)}:\*\*\s+(.*?)(?=\n\*\*|\Z)"
+            match = re.search(pattern, section, re.DOTALL)
+            return match.group(1).strip() if match else None
 
-        description = ""
-        if prob: description += f"*Problem Statement:*\n{prob.group(1).strip()}\n\n"
-        if desc: description += f"*Description:*\n{desc.group(1).strip()}\n\n"
-        if user_story: description += f"*User Story:*\n{user_story.group(1).strip()}\n\n"
-        if ac:
-            ac_lines = re.findall(r"\d+\.\s+.*", ac.group(1).strip())
-            description += "*Acceptance Criteria:*\n" + "\n".join(f"- {line}" for line in ac_lines)
+        prob = extract_block("Problem Statement") or "[Missing problem statement]"
+        desc = extract_block("Description") or "[Missing description]"
+        user_story = extract_block("User Story") or "[Missing user story]"
+        ac_raw = extract_block("Acceptance Criteria") or "[Missing acceptance criteria]"
 
+        # Format acceptance criteria
+        ac_lines = re.findall(r"\d+\.\s+.*", ac_raw)
+        ac_formatted = "\n".join(f"- {line}" for line in ac_lines) if ac_lines else f"- {ac_raw}"
+
+        description = f"""*Problem Statement:*
+{prob}
+
+*Description:*
+{desc}
+
+*User Story:*
+{user_story}
+
+*Acceptance Criteria:*
+{ac_formatted}
+"""
+
+        print(f"🧾 Parsed Ticket — Title: {summary}\nDescription Preview:\n{description[:200]}...\n")
         tickets.append({"summary": summary, "description": description})
 
     return tickets
@@ -139,7 +156,7 @@ def create_jira_issue(summary, description_text):
         "Content-Type": "application/json"
     }
 
-    # Convert description to ADF format
+    # Format Jira description as ADF (Atlassian Document Format)
     adf_description = {
         "type": "doc",
         "version": 1,
@@ -165,7 +182,7 @@ def create_jira_issue(summary, description_text):
         issue_key = res.json()["key"]
         print(f"✅ Created: {issue_key} - {summary}")
 
-        # 📨 Slack you the Jira ticket link
+        # Slack notification for created Jira story
         slack_payload = {
             "channel": slack_channel_id,
             "text": f"📌 *New Jira Story Created:* <https://{jira_domain}/browse/{issue_key}|{issue_key}> – {summary}"
