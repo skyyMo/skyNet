@@ -46,7 +46,7 @@ def handle_fathom():
             "and Tails (a platform for discovering and following betting experts). Your job is to analyze "
             "meeting transcripts and output high-quality product documentation.\n\n"
             "Start by summarizing the key themes discussed in the meeting. Then extract:\n\n"
-            "1. **Epics** — clearly defined problem-solution groupings tied to sports bettor pain points\n"
+            "1. **Probelm Statements** — clearly defined problem-solution groupings tied to sports bettor pain points\n"
             "2. **User Stories** — using the format: 'As a [user], I want [feature] so that [benefit]'\n"
             "3. **Story Titles** — short, actionable labels for each story (no duplicates)\n"
             "4. **Acceptance Criteria** — concise, numbered lists of what success looks like\n\n"
