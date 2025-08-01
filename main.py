@@ -1,103 +1,126 @@
 from flask import Flask, request, jsonify
 from openai import OpenAI
+from requests.auth import HTTPBasicAuth
 import requests
 import os
 import json
 import re
+from dotenv import load_dotenv
 
+load_dotenv()
 app = Flask(__name__)
 
-# Initialize clients and environment variables
+# 🔑 API Clients & Constants
 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 slack_token = os.getenv("SLACK_BOT_TOKEN")
-slack_channel_id = "C098402A8KF"
+slack_channel_id = os.getenv("SLACK_CHANNEL_ID")
+jira_domain = os.getenv("JIRA_DOMAIN")
+jira_email = os.getenv("JIRA_EMAIL")
+jira_token = os.getenv("JIRA_API_TOKEN")
+jira_project = os.getenv("JIRA_PROJECT_KEY")
 
-# Constants
-GPT_MODEL = "gpt-4o"
-GPT_PROMPT = (
-    "You are a senior product manager and agile coach. Your task is to convert a meeting transcript "
-    "into clear, structured development documentation.\n\n"
-    "First, provide a concise summary of key themes discussed in the meeting.\n\n"
-    "Then, for each major topic, extract:\n\n"
-    "1. Problem Statement\n"
-    "Briefly explain the core problem or opportunity this work is addressing.\n\n"
-    "2. Description\n"
-    "Summarize the context, scope, and any relevant background details needed for designers and developers to understand the feature or task.\n\n"
-    "3. User Story\n"
-    "Use the format:\n“As a [type of user], I want [feature or behavior] so that [user benefit or value].”\n\n"
-    "4. Acceptance Criteria\n"
-    "List specific, numbered criteria that must be met for the story to be considered complete. Use a clear and testable format.\n\n"
-    "Be concise, structured, and audience-aware — this will be read by product, design, and engineering stakeholders."
-)
+with open("gpt_prompt.txt", "r") as f:
+    GPT_PROMPT = f.read()
 
-ZERO_WIDTH_CHARACTERS = r"[\u200b-\u200f\u202a-\u202e\u2060-\u206f]"
+ZERO_WIDTH_CHARS = r"[\u200b-\u200f\u202a-\u202e\u2060-\u206f]"
 
 @app.route("/", methods=["GET"])
 def health_check():
-    return "✅ Fathom-GPT-Slack webhook is live!"
+    return "✅ Webhook is live!"
 
 @app.route("/fathom-webhook", methods=["POST"])
-def handle_fathom_webhook():
+def handle_fathom():
     try:
-        # Read and clean raw body
-        raw_body = request.data.decode("utf-8", errors="replace").strip()
-        print("🚨 Raw body string:\n", raw_body)
-
-        cleaned_body = re.sub(ZERO_WIDTH_CHARACTERS, "", raw_body)
+        raw_data = request.data.decode("utf-8", errors="replace").strip()
+        cleaned = re.sub(ZERO_WIDTH_CHARS, "", raw_data)
 
         try:
-            payload = json.loads(cleaned_body)
-        except json.JSONDecodeError as e:
-            print("❌ JSON decode error:", e)
+            payload = json.loads(cleaned)
+        except Exception as e:
             return jsonify({"error": "Invalid JSON"}), 400
 
         transcript = payload.get("transcript", "").strip()
-        meeting_title = payload.get("meeting_title", "Untitled Meeting").strip()
-
+        title = payload.get("meeting_title", "Untitled Meeting").strip()
         if not transcript:
-            return jsonify({"error": "Transcript is required"}), 400
+            return jsonify({"error": "Transcript required"}), 400
 
-        print(f"📝 Meeting Title: {meeting_title}")
-        print(f"📝 Transcript Preview: {transcript[:200]}...")
-
-        # Send prompt to GPT
+        # 🧠 GPT Processing
         gpt_response = openai_client.chat.completions.create(
-            model=GPT_MODEL,
+            model="gpt-4o",
             messages=[
                 {"role": "system", "content": GPT_PROMPT},
                 {"role": "user", "content": transcript}
             ],
             temperature=0.3
         )
-
         summary = gpt_response.choices[0].message.content
-        print("✅ GPT Summary Output:\n", summary)
 
-        # Format and post to Slack
+        # 💬 Post to Slack
         slack_payload = {
             "channel": slack_channel_id,
-            "text": f"*📋 {meeting_title}*\n\n```{summary}```"
+            "text": f"*📋 {title}*\n\n```{summary}```"
         }
-
-        slack_headers = {
+        headers = {
             "Authorization": f"Bearer {slack_token}",
             "Content-Type": "application/json"
         }
+        requests.post("https://slack.com/api/chat.postMessage", json=slack_payload, headers=headers)
 
-        slack_response = requests.post(
-            "https://slack.com/api/chat.postMessage",
-            json=slack_payload,
-            headers=slack_headers
-        )
-
-        if slack_response.status_code != 200 or not slack_response.json().get("ok"):
-            print("⚠️ Slack API error:", slack_response.text)
+        # 🧾 Parse + Create Jira Tickets
+        tickets = parse_gpt_summary(summary)
+        for ticket in tickets:
+            create_jira_issue(ticket["summary"], ticket["description"])
 
         return jsonify({"status": "success"}), 200
 
     except Exception as e:
-        print("❌ Unexpected error:", e)
-        return jsonify({"error": "Internal server error"}), 500
+        print("❌ Error:", str(e))
+        return jsonify({"error": "Internal error"}), 500
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+def parse_gpt_summary(gpt_text):
+    sections = re.split(r"\n+---+\n+", gpt_text)
+    tickets = []
+
+    for section in sections:
+        if not section.strip():
+            continue
+
+        title_match = re.search(r"\*\*\d+\.\s+(.*?)\*\*", section)
+        summary = title_match.group(1).strip() if title_match else "Untitled"
+
+        prob = re.search(r"\*\*Problem Statement:\*\*\s+(.*?)(?:\n|$)", section, re.DOTALL)
+        desc = re.search(r"\*\*Description:\*\*\s+(.*?)(?:\n|$)", section, re.DOTALL)
+        user_story = re.search(r"\*\*User Story:\*\*\s+(.*?)(?:\n|$)", section, re.DOTALL)
+        ac = re.search(r"\*\*Acceptance Criteria:\*\*\s+(.+)", section, re.DOTALL)
+
+        description = ""
+        if prob: description += f"*Problem Statement:*\n{prob.group(1).strip()}\n\n"
+        if desc: description += f"*Description:*\n{desc.group(1).strip()}\n\n"
+        if user_story: description += f"*User Story:*\n{user_story.group(1).strip()}\n\n"
+        if ac:
+            ac_lines = re.findall(r"\d+\.\s+.*", ac.group(1).strip())
+            description += "*Acceptance Criteria:*\n" + "\n".join(f"- {line}" for line in ac_lines)
+
+        tickets.append({"summary": summary, "description": description})
+
+    return tickets
+
+def create_jira_issue(summary, description):
+    url = f"https://{jira_domain}/rest/api/3/issue"
+    auth = HTTPBasicAuth(jira_email, jira_token)
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+
+    payload = {
+        "fields": {
+            "project": {"key": jira_project},
+            "summary": summary,
+            "description": description,
+            "issuetype": {"name": "Story"}
+        }
+    }
+
+    response = requests.post(url, headers=headers, auth=auth, json=payload)
+    if response.status_code == 201:
+        print(f"✅ Created: {response.json()['key']} - {summary}")
+    else:
+        print(f"❌ Failed: {summary} | {response.status_code}: {response.text}")
